@@ -107,15 +107,29 @@ async def chilllink_streams(
         chilllink=True,
     )
 
-    stremio_streams = stremio_response["streams"]
-    sources = [
-        {
-            "id": stream["behaviorHints"]["bingeGroup"],
-            "title": stream["behaviorHints"]["filename"],
-            "url": stream["url"],
-            "metadata": stream["_chilllink"],
-        }
-        for stream in stremio_streams
-    ]
+    return {"sources": _build_chilllink_sources(stremio_response["streams"])}
 
-    return {"sources": sources}
+
+def _build_chilllink_sources(streams):
+    sources = []
+    for index, stream in enumerate(streams):
+        behavior_hints = stream.get("behaviorHints") or {}
+        stream_url = stream.get("url") or stream.get("externalUrl")
+        if not stream_url:
+            continue
+
+        sources.append(
+            {
+                "id": behavior_hints.get("bingeGroup") or f"comet.fast.{index}",
+                "title": (
+                    behavior_hints.get("filename")
+                    or stream.get("name")
+                    or stream.get("title")
+                    or "Comet stream"
+                ),
+                "url": stream_url,
+                "metadata": stream.get("_chilllink") or [],
+            }
+        )
+
+    return sources

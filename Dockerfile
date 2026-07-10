@@ -1,7 +1,7 @@
 FROM ghcr.io/astral-sh/uv:python3.13-alpine
 LABEL name="Comet" \
       description="Stremio's fastest torrent/debrid search add-on." \
-      url="https://github.com/g0ldyy/comet"
+      url="https://github.com/Jordonh18/comet"
 
 RUN apk add --no-cache gcc python3-dev musl-dev linux-headers git make tzdata mimalloc2
 
