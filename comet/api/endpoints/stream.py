@@ -250,6 +250,23 @@ def _dedupe_debrid_entries_by_service(debrid_entries: list) -> list:
     return list(unique_services.values())
 
 
+async def _availability_candidates(torrent_manager, config):
+    initial_count = len(torrent_manager.torrents)
+    await torrent_manager.rank_torrents(
+        config["rtnSettings"],
+        config["rtnRanking"],
+        0,
+        config["maxSize"],
+        config["removeTrash"],
+    )
+    candidates = {
+        info_hash: torrent_manager.torrents[info_hash]
+        for info_hash in torrent_manager.ranked_torrents
+        if info_hash in torrent_manager.torrents
+    }
+    return initial_count, candidates
+
+
 async def background_scrape(
     torrent_manager: TorrentManager,
     media_id: str,
@@ -793,9 +810,18 @@ async def stream(
 
         _merge_service_cache_status(service_cache_status, account_cache_status)
 
+    initial_torrent_count, availability_torrents = await _availability_candidates(
+        torrent_manager, config
+    )
+    if initial_torrent_count and len(availability_torrents) != initial_torrent_count:
+        logger.log(
+            "SCRAPER",
+            f"⚡ Debrid availability prefilter: {len(availability_torrents)}/{initial_torrent_count} torrents after user RTN filtering",
+        )
+
     if debrid_entries:
         existing_service_cache_status = await check_multi_service_availability(
-            debrid_entries, torrent_manager.torrents, search_season, search_episode
+            debrid_entries, availability_torrents, search_season, search_episode
         )
         _merge_service_cache_status(service_cache_status, existing_service_cache_status)
         _merge_service_cache_status(
@@ -803,15 +829,15 @@ async def stream(
         )
     elif enable_torrent:
         await DebridService.apply_cached_availability_any_service(
-            list(torrent_manager.torrents.keys()),
+            list(availability_torrents.keys()),
             search_season,
             search_episode,
-            torrent_manager.torrents,
+            availability_torrents,
         )
 
-    total_count = len(torrent_manager.torrents)
+    total_count = len(availability_torrents)
     total_verified_cached_count = 0
-    for info_hash in torrent_manager.torrents:
+    for info_hash in availability_torrents:
         for service in verified_service_cache_status.get(info_hash, {}).values():
             if service:
                 total_verified_cached_count += 1
@@ -841,7 +867,7 @@ async def stream(
         ) = await get_and_cache_multi_service_availability(
             session,
             debrid_entries,
-            torrent_manager.torrents,
+            availability_torrents,
             media_id,
             media_only_id,
             search_season,
@@ -877,18 +903,9 @@ async def stream(
             )
             logger.log(
                 "SCRAPER",
-                f"💾 Available cached torrents on {service}: {cached_count}/{len(torrent_manager.torrents)}",
+                f"💾 Available cached torrents on {service}: {cached_count}/{len(availability_torrents)} checked candidates",
             )
 
-    initial_torrent_count = len(torrent_manager.torrents)
-
-    await torrent_manager.rank_torrents(
-        config["rtnSettings"],
-        config["rtnRanking"],
-        0,
-        config["maxSize"],
-        config["removeTrash"],
-    )
     logger.log(
         "SCRAPER",
         f"⚖️  Torrents after user RTN filtering: {len(torrent_manager.ranked_torrents)}/{initial_torrent_count}",
