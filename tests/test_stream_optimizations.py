@@ -1,7 +1,7 @@
 import unittest
 
 from comet.api.endpoints.chilllink import _build_chilllink_sources
-from comet.api.endpoints.stream import _availability_candidates
+from comet.api.endpoints.stream import _availability_candidates, _rank_torrents
 
 
 class ChillLinkSourceTests(unittest.TestCase):
@@ -52,19 +52,26 @@ class ChillLinkSourceTests(unittest.TestCase):
 
 
 class AvailabilityCandidateTests(unittest.IsolatedAsyncioTestCase):
-    async def test_filters_before_debrid_availability_checks(self):
+    async def test_only_prefilters_torrents_with_selected_files(self):
         class TorrentManager:
             def __init__(self):
                 self.torrents = {
-                    "keep": {"title": "Keep"},
-                    "drop": {"title": "Drop"},
+                    "keep": {"title": "Keep", "fileIndex": 0},
+                    "hydrate": {"title": "Hydrate", "fileIndex": None},
+                    "drop": {"title": "Drop", "fileIndex": 1},
                 }
                 self.ranked_torrents = []
                 self.rank_args = None
+                self.rank_calls = 0
 
             async def rank_torrents(self, *args):
                 self.rank_args = args
-                self.ranked_torrents = ["keep", "missing"]
+                self.rank_calls += 1
+                self.ranked_torrents = (
+                    ["keep", "missing"]
+                    if self.rank_calls == 1
+                    else ["keep", "hydrate"]
+                )
 
         manager = TorrentManager()
         config = {
@@ -76,12 +83,24 @@ class AvailabilityCandidateTests(unittest.IsolatedAsyncioTestCase):
 
         initial_count, candidates = await _availability_candidates(manager, config)
 
-        self.assertEqual(initial_count, 2)
-        self.assertEqual(candidates, {"keep": {"title": "Keep"}})
+        self.assertEqual(initial_count, 3)
+        self.assertEqual(
+            candidates,
+            {
+                "keep": {"title": "Keep", "fileIndex": 0},
+                "hydrate": {"title": "Hydrate", "fileIndex": None},
+            },
+        )
         self.assertEqual(
             manager.rank_args,
             ("settings", "ranking", 0, 50, True),
         )
+
+        candidates["hydrate"]["fileIndex"] = 2
+        await _rank_torrents(manager, config)
+
+        self.assertEqual(manager.rank_calls, 2)
+        self.assertEqual(manager.ranked_torrents, ["keep", "hydrate"])
 
 
 if __name__ == "__main__":
