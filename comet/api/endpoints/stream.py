@@ -250,8 +250,7 @@ def _dedupe_debrid_entries_by_service(debrid_entries: list) -> list:
     return list(unique_services.values())
 
 
-async def _availability_candidates(torrent_manager, config):
-    initial_count = len(torrent_manager.torrents)
+async def _rank_torrents(torrent_manager, config):
     await torrent_manager.rank_torrents(
         config["rtnSettings"],
         config["rtnRanking"],
@@ -259,10 +258,16 @@ async def _availability_candidates(torrent_manager, config):
         config["maxSize"],
         config["removeTrash"],
     )
+
+
+async def _availability_candidates(torrent_manager, config):
+    initial_count = len(torrent_manager.torrents)
+    await _rank_torrents(torrent_manager, config)
+    ranked_hashes = set(torrent_manager.ranked_torrents)
     candidates = {
-        info_hash: torrent_manager.torrents[info_hash]
-        for info_hash in torrent_manager.ranked_torrents
-        if info_hash in torrent_manager.torrents
+        info_hash: torrent
+        for info_hash, torrent in torrent_manager.torrents.items()
+        if info_hash in ranked_hashes or torrent.get("fileIndex") is None
     }
     return initial_count, candidates
 
@@ -886,6 +891,8 @@ async def stream(
                 }
             )
 
+    await _rank_torrents(torrent_manager, config)
+
     debrid_stream_specs = [
         (entry_index, entry["service"], get_debrid_extension(entry["service"]))
         for entry_index, entry in enumerate(debrid_entries)
@@ -898,8 +905,9 @@ async def stream(
             seen_services.add(service)
             cached_count = sum(
                 1
-                for cache_map in service_cache_status.values()
-                if cache_map.get(service, False)
+                for info_hash, cache_map in service_cache_status.items()
+                if info_hash in availability_torrents
+                and cache_map.get(service, False)
             )
             logger.log(
                 "SCRAPER",
